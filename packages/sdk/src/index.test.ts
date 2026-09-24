@@ -1110,6 +1110,65 @@ describe("StellarDIDCreditSDK", () => {
     });
   });
 
+  describe("batchAnchorVCs", () => {
+    beforeEach(() => {
+      mockSimulateTransaction.mockReset();
+      mockGetAccount.mockReset();
+      mockSendTransaction.mockReset();
+      mockGetTransaction.mockReset();
+      mockContractCalls.length = 0;
+      mockGetAccount.mockResolvedValue({ sequenceNumber: () => "1" });
+      mockSimulateTransaction.mockResolvedValue({ result: {} });
+      mockSendTransaction.mockResolvedValue({
+        status: "PENDING",
+        hash: "mock-tx-hash",
+      });
+      mockGetTransaction.mockResolvedValue({ status: "SUCCESS" });
+    });
+
+    it("chunks entries into transactions of at most 10 operations", async () => {
+      const entries = Array.from({ length: 11 }, (_, index) => ({
+        subject: subjectAddress,
+        vcHash: Buffer.alloc(32, index + 1),
+        ...(index === 0 ? { type: "kyc" } : {}),
+      }));
+
+      const sdk = new StellarDIDCreditSDK(mockConfig);
+      const result = await sdk.batchAnchorVCs(issuerKeypair as never, entries);
+
+      expect(result.success).toBe(true);
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0]?.vcHashes).toHaveLength(10);
+      expect(result.results[1]?.vcHashes).toHaveLength(1);
+      expect(mockSendTransaction).toHaveBeenCalledTimes(2);
+      expect(mockContractCalls.filter((call) => call.method === "anchor_vc"))
+        .toHaveLength(10);
+      expect(
+        mockContractCalls.filter((call) => call.method === "anchor_vc_typed"),
+      ).toHaveLength(1);
+    });
+
+    it("reports a failed chunk and continues with later chunks", async () => {
+      const entries = Array.from({ length: 11 }, (_, index) => ({
+        subject: subjectAddress,
+        vcHash: Buffer.alloc(32, index + 1),
+      }));
+      mockSimulateTransaction
+        .mockResolvedValueOnce({ error: "anchor_vc rejected" })
+        .mockResolvedValueOnce({ result: {} });
+
+      const sdk = new StellarDIDCreditSDK(mockConfig);
+      const result = await sdk.batchAnchorVCs(issuerKeypair as never, entries);
+
+      expect(result.success).toBe(false);
+      expect(result.failedChunks).toBe(1);
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0]?.status).toBe("failed");
+      expect(result.results[1]?.status).toBe("success");
+      expect(mockSendTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("verifyVC", () => {
     it("returns true for a valid hash", async () => {
       mockSimulateTransaction.mockResolvedValue({

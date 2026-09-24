@@ -13,6 +13,7 @@ import {
 
 export const MIN_SCORE = 300;
 export const MAX_SCORE = 850;
+const BATCH_ANCHOR_MAX_SIZE = 10;
 
 export type NetworkType = "testnet" | "mainnet" | "futurenet" | "custom";
 
@@ -1022,6 +1023,74 @@ export class StellarDIDCreditSDK {
     );
 
     return txHash;
+  }
+
+  /**
+   * Anchor multiple verifiable credentials in sequential transactions.
+   *
+   * Entries are submitted in chunks of at most 10 contract operations. A failed
+   * chunk is recorded in the returned BatchResult and does not stop later chunks.
+   *
+   * @param issuerKeypair - Stellar keypair of the credential issuer
+   * @param entries - Subjects, VC hashes, and optional credential type labels
+   * @returns BatchResult with per-chunk status and transaction hashes
+   */
+  async batchAnchorVCs(
+    issuerKeypair: KeypairLike,
+    entries: { subject: string; vcHash: Buffer; type?: string }[],
+  ): Promise<BatchResult> {
+    for (const entry of entries) {
+      if (entry.vcHash.length !== 32) {
+        throw new SDKError(
+          "INVALID_VC_HASH",
+          "Each vcHash must be exactly 32 bytes",
+        );
+      }
+    }
+
+    const result: BatchResult = {
+      success: true,
+      failedChunks: 0,
+      transactionHashes: [],
+      results: [],
+    };
+
+    let chunkIndex = 0;
+    for (let i = 0; i < entries.length; i += BATCH_ANCHOR_MAX_SIZE) {
+      const chunk = entries.slice(i, i + BATCH_ANCHOR_MAX_SIZE);
+      try {
+        const transactionHash = await this.submitBatchAnchorChunk(
+          issuerKeypair,
+          chunk,
+        );
+        result.transactionHashes.push(transactionHash);
+        result.results.push({
+          chunkIndex,
+          vcHashes: chunk.map((entry) => entry.vcHash),
+          status: "success",
+          transactionHash,
+        });
+      } catch (error) {
+        result.success = false;
+        result.failedChunks += 1;
+        result.results.push({
+          chunkIndex,
+          vcHashes: chunk.map((entry) => entry.vcHash),
+          status: "failed",
+          error:
+            error instanceof SDKError
+              ? error
+              : new SDKError(
+                  "TRANSACTION_FAILED",
+                  `batchAnchorVCs chunk failed: ${getErrorMessage(error)}`,
+                  { cause: error },
+                ),
+        });
+      }
+      chunkIndex += 1;
+    }
+
+    return result;
   }
 
   /**
@@ -2539,6 +2608,80 @@ export class StellarDIDCreditSDK {
         error,
       );
     }
+
+    return txHash;
+  }
+
+  private async submitBatchAnchorChunk(
+    issuerKeypair: KeypairLike,
+    entries: { subject: string; vcHash: Buffer; type?: string }[],
+  ): Promise<string> {
+    const server = this.server;
+    const contract = new Contract(this.config.identityOracleId);
+    const publicKey = getPublicKey(issuerKeypair);
+
+    const accountData = await server.getAccount(publicKey);
+    const sourceAccount = new Account(publicKey, accountData.sequenceNumber());
+    const txBuilder = new TransactionBuilder(sourceAccount, {
+      fee: this.config.baseFee ?? BASE_FEE,
+      networkPassphrase: this.config.networkPassphrase,
+    });
+
+    for (const entry of entries) {
+      const operation = entry.type
+        ? contract.call(
+            "anchor_vc_typed",
+            new Address(publicKey).toScVal(),
+            new Address(entry.subject).toScVal(),
+            nativeToScVal(new Uint8Array(entry.vcHash), { type: "bytes" }),
+            nativeToScVal(entry.type),
+          )
+        : contract.call(
+            "anchor_vc",
+            new Address(publicKey).toScVal(),
+            new Address(entry.subject).toScVal(),
+            nativeToScVal(new Uint8Array(entry.vcHash), { type: "bytes" }),
+          );
+      txBuilder.addOperation(operation);
+    }
+
+    const tx = txBuilder
+      .setTimeout(this.config.timeoutSeconds ?? 30)
+      .build();
+    const sim = await server.simulateTransaction(tx);
+
+    if (SorobanRpc.Api.isSimulationError(sim)) {
+      throwContractError(sim.error, "identity-oracle");
+    }
+
+    if (!SorobanRpc.Api.isSimulationSuccess(sim)) {
+      throw new SDKError(
+        "TRANSACTION_FAILED",
+        "batchAnchorVCs simulation returned an unexpected response",
+      );
+    }
+
+    const preparedTx = SorobanRpc.assembleTransaction(tx, sim).build();
+    preparedTx.sign(issuerKeypair as Keypair);
+
+    const txHash = await sendTransactionWithRetry(
+      server,
+      preparedTx,
+      this.config.maxRetries,
+      (response) =>
+        new SDKError(
+          "TRANSACTION_FAILED",
+          `batchAnchorVCs submission failed: ${response.errorResult}`,
+        ),
+    );
+
+    await waitForTransactionConfirmation(
+      server,
+      txHash,
+      "batchAnchorVCs",
+      getConfirmationTimeoutMs(this.config),
+      getTransactionPollIntervalMs(this.config),
+    );
 
     return txHash;
   }
