@@ -2897,7 +2897,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flag_score_input_rejects_invalid_key() {
+    fn flag_score_input_invalid_key() {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, CreditOracle);
@@ -2907,7 +2907,7 @@ mod tests {
         let subject = Address::generate(&env);
         client.initialize(&admin);
 
-        let bad_key = soroban_sdk::Symbol::new(&env, "bad_input");
+        let bad_key = soroban_sdk::Symbol::new(&env, "invalid");
         let reason = soroban_sdk::String::from_str(&env, "test");
         let result = client.try_flag_score_input(&subject, &bad_key, &reason);
         assert_eq!(result, Err(Ok(CreditOracleError::InvalidInputKey)));
