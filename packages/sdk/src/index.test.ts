@@ -1628,6 +1628,26 @@ describe("StellarDIDCreditSDK", () => {
     });
   });
 
+  describe("listRevokedByIssuer", () => {
+    it("returns revoked credential hashes as Buffers", async () => {
+      const revokedHashes = [Buffer.alloc(32, 1), Buffer.alloc(32, 2)];
+      mockSimulateTransaction.mockResolvedValue({
+        result: { retval: { value: revokedHashes } },
+      });
+
+      const sdk = new StellarDIDCreditSDK(mockConfig);
+      const result = await sdk.listRevokedByIssuer(issuerKeypair.publicKey());
+
+      expect(result).toEqual(revokedHashes);
+      expect(result.every((hash) => Buffer.isBuffer(hash))).toBe(true);
+      expect(mockLastContractCall).toMatchObject({
+        contractId: mockConfig.revocationRegistryId,
+        method: "list_revoked_for_issuer",
+      });
+      expect(mockLastContractCall?.args).toHaveLength(1);
+    });
+  });
+
   describe("getCredentialType", () => {
     it("returns the credential type label for a valid hash", async () => {
       mockSimulateTransaction.mockResolvedValue({

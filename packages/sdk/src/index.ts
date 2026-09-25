@@ -1766,6 +1766,54 @@ export class StellarDIDCreditSDK {
   }
 
   /**
+   * List all credential hashes revoked by an issuer.
+   *
+   * Uses a read-only simulation against the revocation-registry contract.
+   *
+   * @param issuer - Stellar G... address of the issuer
+   * @returns Array of revoked credential hashes as Buffers
+   */
+  async listRevokedByIssuer(issuer: string): Promise<Buffer[]> {
+    const server = this.server;
+    const contract = new Contract(this.config.revocationRegistryId);
+    const sourceAccount = new Account(this.config.simAccount, "0");
+
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: this.config.networkPassphrase,
+    })
+      .addOperation(
+        contract.call(
+          "list_revoked_for_issuer",
+          new Address(issuer).toScVal(),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+
+    const sim = await server.simulateTransaction(tx);
+
+    if (SorobanRpc.Api.isSimulationError(sim)) {
+      throwContractError(sim.error, "revocation-registry");
+    }
+
+    if (!SorobanRpc.Api.isSimulationSuccess(sim)) {
+      throw new Error("Simulation returned unexpected response");
+    }
+
+    const resultScVal = sim.result?.retval;
+    if (!resultScVal) {
+      throw new Error("No return value in simulation result");
+    }
+
+    const native = scValToNative(resultScVal);
+    if (!Array.isArray(native)) {
+      throw new Error("list_revoked_for_issuer returned an invalid result");
+    }
+    return native.map((hash) => Buffer.from(hash as Uint8Array));
+  }
+
+  /**
    * Fetch the credential type label anchored for a subject's VC hash from the
    * identity-oracle.
    *

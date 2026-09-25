@@ -153,6 +153,7 @@ Maintains an on-chain list of revoked credential hashes.
 | `revoke(issuer, vc_hash)`         | Revokes a credential by hash                    |
 | `batch_revoke(issuer, vc_hashes)` | Revokes multiple credentials in one transaction |
 | `is_revoked(vc_hash)`             | Returns true if the credential has been revoked |
+| `list_revoked_for_issuer(issuer)` | Returns all VC hashes revoked by the issuer    |
 | `upgrade(admin, new_wasm_hash)`   | Upgrades the contract WASM in-place             |
 
 ### score-range-verifier
