@@ -17,6 +17,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Install wasm-pack
+        run: |
+          cargo install wasm-pack --version 0.13.1 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
