@@ -211,9 +211,12 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
 
       - name: Check Node.js dependencies for vulnerabilities
-        run: pnpm audit --audit-level=high
+        # GHSA-vfj7-8cjw-p6xm has no patched braces release yet.
+        run: pnpm --pm-on-fail=ignore audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm
 
   smoke-test:
     name: Testnet smoke test
