@@ -846,6 +846,76 @@ program
   });
 
 // ---------------------------------------------------------------------------
+// Command group: revocation
+// ---------------------------------------------------------------------------
+
+const revocation = program
+  .command("revocation")
+  .description("Check revocation status and list revoked credentials.");
+
+revocation
+  .command("check")
+  .description("Check whether a credential has been revoked.")
+  .argument("<vc-hash>", "SHA-256 credential hash (64 hex characters)")
+  .option("--json", "Output as JSON")
+  .action(async (hash: string, cmdOptions: { json?: boolean }) => {
+    const config = loadConfig(program.opts().network as NetworkType);
+    validateConfig(config, ["revocationRegistryId"], true);
+    const parsed = parseVcHash(hash);
+    if (!parsed) return;
+    try {
+      const revoked = await new StellarDIDCreditSDK(config).isRevoked(parsed);
+      if (cmdOptions.json) console.log(JSON.stringify({ vcHash: hash.toLowerCase(), revoked }));
+      else console.log(revoked ? "Credential is revoked." : "Credential is not revoked.");
+    } catch (err) { console.error("Failed:", err instanceof Error ? err.message : err); process.exit(1); }
+  });
+
+revocation
+  .command("record")
+  .description("Get the issuer that revoked a credential.")
+  .argument("<vc-hash>", "SHA-256 credential hash (64 hex characters)")
+  .option("--json", "Output as JSON")
+  .action(async (hash: string, cmdOptions: { json?: boolean }) => {
+    const config = loadConfig(program.opts().network as NetworkType);
+    validateConfig(config, ["revocationRegistryId"], true);
+    const parsed = parseVcHash(hash);
+    if (!parsed) return;
+    try {
+      const issuer = await new StellarDIDCreditSDK(config).getRevocationRecord(parsed);
+      if (cmdOptions.json) console.log(JSON.stringify({ vcHash: hash.toLowerCase(), issuer }));
+      else console.log(issuer ? `Revoking issuer: ${issuer}` : "Credential has no revocation record.");
+    } catch (err) { console.error("Failed:", err instanceof Error ? err.message : err); process.exit(1); }
+  });
+
+for (const action of ["count", "list"] as const) {
+  revocation
+    .command(action)
+    .description(action === "count" ? "Get the number of credentials revoked by an issuer." : "List credential hashes revoked by an issuer.")
+    .argument("<issuer-address>", "Stellar G... address of the issuer")
+    .option("--json", "Output as JSON")
+    .action(async (issuer: string, cmdOptions: { json?: boolean }) => {
+      const config = loadConfig(program.opts().network as NetworkType);
+      validateConfig(config, ["revocationRegistryId"], true);
+      const upperIssuer = issuer.toUpperCase();
+      assertStellarAddress("issuer-address", upperIssuer);
+      try {
+        const sdk = new StellarDIDCreditSDK(config);
+        if (action === "count") {
+          const count = await sdk.getRevocationCount(upperIssuer);
+          if (cmdOptions.json) console.log(JSON.stringify({ issuer: upperIssuer, count }));
+          else console.log(`Revocation count: ${count}`);
+        } else {
+          const hashes = await sdk.listRevokedByIssuer(upperIssuer);
+          const vcHashes = hashes.map((value) => value.toString("hex"));
+          if (cmdOptions.json) console.log(JSON.stringify({ issuer: upperIssuer, vcHashes }));
+          else if (vcHashes.length === 0) console.log("No revoked credentials found.");
+          else for (const hash of vcHashes) console.log(hash);
+        }
+      } catch (err) { console.error("Failed:", err instanceof Error ? err.message : err); process.exit(1); }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Command group: disputes
 // ---------------------------------------------------------------------------
 
